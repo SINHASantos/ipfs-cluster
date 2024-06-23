@@ -27,7 +27,7 @@ const programName = `ipfs-cluster-ctl`
 
 // Version is the cluster-ctl tool version. It should match
 // the IPFS cluster's version
-const Version = "1.1.0"
+const Version = "1.1.1"
 
 var (
 	defaultHost          = "/ip4/127.0.0.1/tcp/9094"
@@ -1084,6 +1084,19 @@ trigger automatic repinnings if configured.
 `,
 					Action: func(c *cli.Context) error {
 						resp, cerr := globalClient.Alerts(ctx)
+						formatResponse(c, resp, cerr)
+						return nil
+					},
+				},
+				{
+					Name:  "bandwidth",
+					Usage: "Lists bandwidth stats for libp2p protocols",
+					Description: `
+This command lists information about bytes sent, received and current bandwidth
+rates for each libp2p protocol that the peer uses.
+`,
+					Action: func(c *cli.Context) error {
+						resp, cerr := globalClient.BandwidthByProtocol(ctx)
 						formatResponse(c, resp, cerr)
 						return nil
 					},
