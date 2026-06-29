@@ -1,0 +1,107 @@
+name: Release Binaries
+
+# Run manually (workflow_dispatch) against a release tag. Cross-compiles ipfs-cluster-ctl,
+# ipfs-cluster-follow and ipfs-cluster-service for every platform and attaches any archive
+# missing from the GitHub Release. Idempotent: an asset that already exists (including one
+# uploaded by hand) is left untouched, so a re-run only fills gaps. See RELEASE.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach binaries for (e.g. v1.1.6)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      build: ${{ steps.resolve.outputs.build }}
+    steps:
+      - id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag to build for"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Only releases that carry GitHub binaries (>= v1.1.6); older tags are a no-op.
+          floor="v1.1.6"
+          lowest="$(printf '%s\n%s\n' "$floor" "$TAG" | sort -V | head -n1)"
+          if [ "$TAG" = "$floor" ] || [ "$lowest" = "$floor" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG predates $floor; nothing to attach"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  attach:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - darwin/amd64
+          - darwin/arm64
+          - linux/amd64
+          - linux/arm64
+          - freebsd/amd64
+          - openbsd/amd64
+          - windows/amd64
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build and attach missing binaries
+        run: |
+          set -euo pipefail
+          GOOS="${PLATFORM%/*}"
+          GOARCH="${PLATFORM#*/}"
+          ext="tar.gz"
+          exe=""
+          if [ "$GOOS" = "windows" ]; then
+            ext="zip"
+            exe=".exe"
+          fi
+
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+
+          for tool in ipfs-cluster-ctl ipfs-cluster-follow ipfs-cluster-service; do
+            asset="${tool}_${TAG}_${GOOS}-${GOARCH}.${ext}"
+            if grep -qxF "$asset" <<< "$existing"; then
+              echo "skip $asset (already on the release)"
+              continue
+            fi
+            echo "building $asset"
+            rm -rf "$tool"
+            mkdir -p "$tool"
+            ( cd "cmd/$tool" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+                go build -trimpath -mod=readonly -o "$GITHUB_WORKSPACE/$tool/${tool}${exe}" . ) \
+              > "$tool/build-log" 2>&1
+            cp cmd/"$tool"/dist/* "$tool"/
+            if [ "$ext" = "zip" ]; then
+              zip -r "$asset" "$tool" > /dev/null
+            else
+              tar czf "$asset" "$tool"
+            fi
+            gh release upload "$TAG" "$asset"
+            rm -rf "$tool" "$asset"
+          done
