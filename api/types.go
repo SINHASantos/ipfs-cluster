@@ -1369,11 +1369,7 @@ func (m *Metric) SetTTL(d time.Duration) {
 // GetTTL returns the time left before the Metric expires
 func (m Metric) GetTTL() time.Duration {
 	expDate := time.Unix(0, m.Expire)
-	ttl := time.Until(expDate)
-	if ttl < 0 {
-		ttl = 0
-	}
-	return ttl
+	return max(time.Until(expDate), 0)
 }
 
 // Expired returns if the Metric has expired

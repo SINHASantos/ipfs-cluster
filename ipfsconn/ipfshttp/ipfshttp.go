@@ -425,10 +425,7 @@ func (ipfs *Connector) Pin(ctx context.Context, pin api.Pin) error {
 	defer cancelRequest()
 
 	// If the pin has origins, tell ipfs to connect to a maximum of 10.
-	bound := len(pin.Origins)
-	if bound > 10 {
-		bound = 10
-	}
+	bound := min(len(pin.Origins), 10)
 	for _, orig := range pin.Origins[0:bound] {
 		// do it in the background, ignoring errors.
 		go func(o string) {
